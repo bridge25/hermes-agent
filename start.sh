@@ -94,6 +94,14 @@ export HERMES_MODEL="$HERMES_MODEL_DEFAULT"
 export OPENCODE_GO_BASE_URL="$OPENCODE_GO_BASE_URL_DEFAULT"
 export HERMES_ALLOW_ROOT_GATEWAY=1
 
+# Railway routes all external HTTPS traffic to a single internal port
+# (set via $PORT, default 3000). To receive Telegram webhook POSTs, the
+# gateway must listen on that exact port — otherwise Railway forwards the
+# Telegram POST to whatever else is on $PORT (e.g., a stand-alone
+# healthcheck) and the bot never sees a single message.
+export TELEGRAM_WEBHOOK_PORT="${PORT:-3000}"
+echo "[start.sh] TELEGRAM_WEBHOOK_PORT pinned to PORT=$TELEGRAM_WEBHOOK_PORT"
+
 # --- 6. Activate venv -------------------------------------------------------
 # shellcheck source=/dev/null
 source "$INSTALL_DIR/.venv/bin/activate"
@@ -122,28 +130,16 @@ print(
 )
 PYEOF
 
-# --- 9. Healthcheck server (background, separate PORT from webhook) ---------
-HEALTH_PORT="${PORT:-3000}"
-python3 - "$HEALTH_PORT" <<'PYEOF' &
-import sys, http.server, socketserver
-port = int(sys.argv[1])
-class H(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path in ("/", "/health", "/healthz"):
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"ok")
-        else:
-            self.send_response(404)
-            self.end_headers()
-    def log_message(self, *a, **kw):
-        pass
-with socketserver.TCPServer(("", port), H) as s:
-    s.serve_forever()
-PYEOF
+# --- 9. (removed) standalone healthcheck server ----------------------------
+# Earlier versions launched a Python HTTP server here so Railway could see
+# the container as alive. That collided with the Telegram webhook listener
+# (both binding $PORT) and silently swallowed every Telegram POST. The
+# gateway's webhook server already listens on the same $PORT — and Railway
+# is configured with healthcheckPath=null, so an external probe isn't
+# required. Kept the section header so the file structure stays stable
+# for anyone diffing against the previous version.
 
-echo "[start.sh] healthcheck on :$HEALTH_PORT — handing off to hermes gateway run"
+echo "[start.sh] handing off to hermes gateway run (webhook port=$TELEGRAM_WEBHOOK_PORT)"
 
 # --- 10. exec gateway as the foreground process -----------------------------
 exec hermes gateway run
