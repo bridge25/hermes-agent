@@ -1606,6 +1606,15 @@ class TelegramAdapter(BasePlatformAdapter):
 
             # Decide between webhook and polling mode
             webhook_url = os.getenv("TELEGRAM_WEBHOOK_URL", "").strip()
+            # Verbose mode-decision log so Railway/Docker operators can
+            # see exactly which branch was taken without raising the
+            # whole gateway log level.
+            print(
+                f"[telegram-platform] mode decision: "
+                f"TELEGRAM_WEBHOOK_URL={'<empty>' if not webhook_url else webhook_url!r}, "
+                f"pid={os.getpid()}",
+                flush=True,
+            )
 
             if webhook_url:
                 # ── Webhook mode ─────────────────────────────────────
@@ -1667,6 +1676,11 @@ class TelegramAdapter(BasePlatformAdapter):
                 # ── Polling mode (default) ───────────────────────────
                 # Clear any stale webhook first so polling doesn't inherit a
                 # previous webhook registration and silently stop receiving updates.
+                print(
+                    f"[telegram-platform] entering POLLING mode "
+                    f"(TELEGRAM_WEBHOOK_URL not set) — about to delete_webhook",
+                    flush=True,
+                )
                 delete_webhook = getattr(self._bot, "delete_webhook", None)
                 if callable(delete_webhook):
                     await delete_webhook(drop_pending_updates=False)
