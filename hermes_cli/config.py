@@ -4394,7 +4394,11 @@ def _normalize_root_model_keys(config: Dict[str, Any]) -> Dict[str, Any]:
 
     for key in ("provider", "base_url", "context_length"):
         root_val = config.get(key)
-        if root_val and not model.get(key):
+        model_val = model.get(key)
+        # Treat the built-in default "auto" for provider as unset so a
+        # root-level `provider:` written by `hermes config set provider X`
+        # is promoted correctly (issue #24433, cherry-pick of PR #24574).
+        if root_val and (not model_val or (key == "provider" and model_val == "auto")):
             model[key] = root_val
         config.pop(key, None)
 
