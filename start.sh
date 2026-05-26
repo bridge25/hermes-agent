@@ -102,6 +102,18 @@ export HERMES_ALLOW_ROOT_GATEWAY=1
 export TELEGRAM_WEBHOOK_PORT="${PORT:-3000}"
 echo "[start.sh] TELEGRAM_WEBHOOK_PORT pinned to PORT=$TELEGRAM_WEBHOOK_PORT"
 
+# Explicitly re-export Railway-provided Telegram env vars so they are
+# guaranteed to reach the python gateway process. Without this, if
+# something between Railway and the container drops a variable, the
+# gateway falls back to polling mode and deletes the webhook from
+# Telegram's side — making it look like our setWebhook keeps "resetting"
+# even though Telegram is doing exactly what gateway told it to.
+export TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+export TELEGRAM_WEBHOOK_URL="${TELEGRAM_WEBHOOK_URL:-}"
+export TELEGRAM_WEBHOOK_SECRET="${TELEGRAM_WEBHOOK_SECRET:-}"
+export TELEGRAM_ALLOW_ALL_USERS="${TELEGRAM_ALLOW_ALL_USERS:-true}"
+export OPENCODE_GO_API_KEY="${OPENCODE_GO_API_KEY:-}"
+
 # --- 6. Activate venv -------------------------------------------------------
 # shellcheck source=/dev/null
 source "$INSTALL_DIR/.venv/bin/activate"
@@ -121,11 +133,23 @@ python3 - <<'PYEOF' || echo "[start.sh] WARN: runtime provider probe raised"
 import os
 from hermes_cli.runtime_provider import resolve_runtime_provider
 runtime = resolve_runtime_provider()
+# Mask key but show enough to confirm it's truly set and matches sk- prefix
+_k = os.getenv("OPENCODE_GO_API_KEY","")
+_k_disp = f"{_k[:5]}…{_k[-4:]} ({len(_k)} chars)" if _k else "(MISSING)"
 print(
     f"[start.sh] runtime provider: {runtime.get('provider')} | "
     f"base_url: {runtime.get('base_url')} | "
     f"api_key present: {bool(runtime.get('api_key'))} | "
     f"HERMES_PROVIDER env: {os.getenv('HERMES_PROVIDER')!r}",
+    flush=True,
+)
+print(
+    f"[start.sh] telegram env check | "
+    f"TELEGRAM_WEBHOOK_URL: {os.getenv('TELEGRAM_WEBHOOK_URL','(EMPTY)')!r} | "
+    f"TELEGRAM_WEBHOOK_PORT: {os.getenv('TELEGRAM_WEBHOOK_PORT','(EMPTY)')!r} | "
+    f"TELEGRAM_WEBHOOK_SECRET len: {len(os.getenv('TELEGRAM_WEBHOOK_SECRET',''))} | "
+    f"TELEGRAM_BOT_TOKEN len: {len(os.getenv('TELEGRAM_BOT_TOKEN',''))} | "
+    f"OPENCODE_GO_API_KEY: {_k_disp}",
     flush=True,
 )
 PYEOF
