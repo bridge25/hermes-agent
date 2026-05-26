@@ -23,7 +23,18 @@
 #   - TELEGRAM_ALLOW_ALL_USERS=true
 #   - PORT=3000 (healthcheck, not webhook)
 #   - HERMES_AUTH_JSON_BOOTSTRAP=<auth.json contents as a single line>
+
+# Debug: prove the container made it this far BEFORE any guard activates.
+# These three lines must reach Railway's log stream; if they don't, the
+# script never ran (e.g. permissions, missing /bin/bash, ENTRYPOINT issue).
+echo "[start.sh] alive pid=$$ time=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "[start.sh] user=$(id)"
+echo "[start.sh] pwd=$(pwd) shell=$BASH_VERSION"
+
+# Show every command after this point for traceability, then activate guards.
+set -x
 set -euo pipefail
+trap 'echo "[start.sh] FAILED at line $LINENO (exit=$?)" >&2' ERR
 
 HERMES_HOME="${HERMES_HOME:-/tmp/hermes}"
 INSTALL_DIR="/opt/hermes"
