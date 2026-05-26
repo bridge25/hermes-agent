@@ -114,11 +114,24 @@ export TELEGRAM_WEBHOOK_SECRET="${TELEGRAM_WEBHOOK_SECRET:-}"
 export TELEGRAM_ALLOW_ALL_USERS="${TELEGRAM_ALLOW_ALL_USERS:-true}"
 export OPENCODE_GO_API_KEY="${OPENCODE_GO_API_KEY:-}"
 
+# Escape hatch: when HERMES_TELEGRAM_MODE=polling, force the gateway
+# into polling mode by stripping the webhook env. This bypasses PTB's
+# Updater.bootstrap_set_webhook retry storm that keeps clearing the
+# webhook on Telegram's side in some Railway deployments.
+if [ "${HERMES_TELEGRAM_MODE:-webhook}" = "polling" ]; then
+  echo "[start.sh] HERMES_TELEGRAM_MODE=polling — clearing TELEGRAM_WEBHOOK_URL to force polling"
+  unset TELEGRAM_WEBHOOK_URL
+fi
+
 # --- 6. Activate venv -------------------------------------------------------
 # shellcheck source=/dev/null
 source "$INSTALL_DIR/.venv/bin/activate"
 
 # --- 7. Telegram webhook setup (idempotent) ---------------------------------
+# Webhook setup only when we are actually in webhook mode. In polling
+# mode (TELEGRAM_WEBHOOK_URL unset / HERMES_TELEGRAM_MODE=polling),
+# proactively delete any stale webhook so PTB's polling can start
+# without a 409 conflict from Telegram.
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_WEBHOOK_URL:-}" ]; then
   echo "[start.sh] setting Telegram webhook to $TELEGRAM_WEBHOOK_URL"
   curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
@@ -126,14 +139,20 @@ if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_WEBHOOK_URL:-}" ]; then
        -d "{\"url\":\"${TELEGRAM_WEBHOOK_URL}\",\"secret_token\":\"${TELEGRAM_WEBHOOK_SECRET:-}\",\"drop_pending_updates\":true}" \
        > /dev/null \
        || echo "[start.sh] WARN: webhook setup failed (will retry on next deploy)"
+elif [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  echo "[start.sh] polling mode — deleting any stale webhook"
+  curl -fsS -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/deleteWebhook?drop_pending_updates=false" \
+       > /dev/null \
+       || true
 fi
 
-# --- 7b. Webhook keepalive loop (background) --------------------------------
+# --- 7b. Webhook keepalive loop (background, webhook mode only) -------------
 # python-telegram-bot's webhook code path repeatedly clears the webhook on
 # Telegram's side during its application/updater retry cycles, even though
 # our local HTTP listener stays up. To survive that, we run a background
 # loop that re-sets the webhook every 25s if Telegram reports it as empty.
 # Cost: one HTTP call per minute. Benefit: deterministic message delivery.
+# Skipped entirely in polling mode (TELEGRAM_WEBHOOK_URL unset).
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_WEBHOOK_URL:-}" ]; then
   (
     # Wait for the gateway boot/PTB-init churn to settle a bit.
