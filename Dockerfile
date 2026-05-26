@@ -196,7 +196,12 @@ ENV HERMES_HOME=/opt/data
 # subprocess that doesn't activate the venv first still find hermes.
 ENV PATH="/opt/hermes/.venv/bin:/opt/data/.local/bin:${PATH}"
 RUN mkdir -p /opt/data
-VOLUME [ "/opt/data" ]
+# Railway's V3 Metal builder rejects the VOLUME directive entirely.
+# On Railway, persistence is handled by Railway Volumes configured in
+# the service settings (already mounted at /opt/data), so this VOLUME
+# declaration adds no runtime value but blocks `railway up` builds.
+# Kept as a comment for parity with upstream docker-compose users.
+# VOLUME [ "/opt/data" ]
 
 # s6-overlay's /init is PID 1. It sets up the supervision tree, runs
 # /etc/cont-init.d/* (our stage2 hook), starts s6-rc services
