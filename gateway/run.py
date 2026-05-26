@@ -1070,6 +1070,14 @@ def _resolve_runtime_agent_kwargs() -> dict:
     not consult environment variables for behavioral config — config.yaml
     is authoritative.
 
+    Headless/container deployments (Railway, Docker) may run with a
+    read-only or race-prone HERMES_HOME and lose access to config.yaml at
+    arbitrary moments.  When the user has explicitly pinned a provider via
+    ``HERMES_PROVIDER`` / ``HERMES_INFERENCE_PROVIDER`` and supplied the
+    matching ``<PROVIDER>_API_KEY`` env var, prefer those over re-reading
+    config.yaml — this is the deployment contract Railway-style hosts rely
+    on (issue #24433 follow-up).
+
     If the primary provider fails with an authentication error, attempt to
     resolve credentials using the fallback provider chain from config.yaml
     before giving up.
@@ -1078,10 +1086,44 @@ def _resolve_runtime_agent_kwargs() -> dict:
         resolve_runtime_provider,
         format_runtime_provider_error,
     )
-    from hermes_cli.auth import AuthError
+    from hermes_cli.auth import AuthError, PROVIDER_REGISTRY, has_usable_secret
+
+    # Headless deploy override: if HERMES_PROVIDER / HERMES_INFERENCE_PROVIDER
+    # is set AND the matching env-var-based API key is present, pass them
+    # explicitly so resolve_runtime_provider takes the explicit-runtime path
+    # rather than depending on config.yaml/auth.json being readable at this
+    # exact moment.
+    _env_provider = (
+        os.getenv("HERMES_PROVIDER", "").strip().lower()
+        or os.getenv("HERMES_INFERENCE_PROVIDER", "").strip().lower()
+        or None
+    )
+    _explicit_api_key: Optional[str] = None
+    _explicit_base_url: Optional[str] = None
+    if _env_provider:
+        _pconfig = PROVIDER_REGISTRY.get(_env_provider)
+        if _pconfig is not None:
+            for _ev in _pconfig.api_key_env_vars:
+                _val = os.getenv(_ev, "").strip()
+                if has_usable_secret(_val):
+                    _explicit_api_key = _val
+                    break
+            _base_env = (
+                os.getenv(_pconfig.base_url_env_var, "").strip()
+                if _pconfig.base_url_env_var
+                else ""
+            )
+            _explicit_base_url = _base_env or _pconfig.inference_base_url
 
     try:
-        runtime = resolve_runtime_provider()
+        if _env_provider and _explicit_api_key:
+            runtime = resolve_runtime_provider(
+                requested=_env_provider,
+                explicit_api_key=_explicit_api_key,
+                explicit_base_url=_explicit_base_url,
+            )
+        else:
+            runtime = resolve_runtime_provider()
     except AuthError as auth_exc:
         # Primary provider auth failed (expired token, revoked key, etc.).
         # Try the fallback provider chain before raising.
