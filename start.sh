@@ -128,6 +128,35 @@ if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_WEBHOOK_URL:-}" ]; then
        || echo "[start.sh] WARN: webhook setup failed (will retry on next deploy)"
 fi
 
+# --- 7b. Webhook keepalive loop (background) --------------------------------
+# python-telegram-bot's webhook code path repeatedly clears the webhook on
+# Telegram's side during its application/updater retry cycles, even though
+# our local HTTP listener stays up. To survive that, we run a background
+# loop that re-sets the webhook every 25s if Telegram reports it as empty.
+# Cost: one HTTP call per minute. Benefit: deterministic message delivery.
+if [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${TELEGRAM_WEBHOOK_URL:-}" ]; then
+  (
+    # Wait for the gateway boot/PTB-init churn to settle a bit.
+    sleep 30
+    while true; do
+      _info=$(curl -fsS -m 8 "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getWebhookInfo" 2>/dev/null || echo '{}')
+      _cur=$(printf '%s' "$_info" | python3 -c 'import sys,json
+try: print(json.load(sys.stdin).get("result",{}).get("url",""))
+except: print("")' 2>/dev/null)
+      if [ -z "$_cur" ] || [ "$_cur" != "${TELEGRAM_WEBHOOK_URL}" ]; then
+        curl -fsS -m 8 -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
+             -H "Content-Type: application/json" \
+             -d "{\"url\":\"${TELEGRAM_WEBHOOK_URL}\",\"secret_token\":\"${TELEGRAM_WEBHOOK_SECRET:-}\",\"drop_pending_updates\":false}" \
+             > /dev/null 2>&1 \
+             && echo "[webhook-keepalive] re-armed (Telegram had: ${_cur:-empty})"
+      fi
+      sleep 25
+    done
+  ) &
+  disown
+  echo "[start.sh] webhook keepalive loop started (every 25s)"
+fi
+
 # --- 8. Provider resolution probe (gateway's exact code path) ---------------
 python3 - <<'PYEOF' || echo "[start.sh] WARN: runtime provider probe raised"
 import os
