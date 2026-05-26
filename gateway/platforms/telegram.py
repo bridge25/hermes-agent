@@ -1646,30 +1646,26 @@ class TelegramAdapter(BasePlatformAdapter):
                 from urllib.parse import urlparse
                 webhook_path = urlparse(webhook_url).path or "/telegram"
 
-                # Bind the local webhook listener WITHOUT delegating
-                # setWebhook to python-telegram-bot.  Passing webhook_url
-                # makes PTB call bot.set_webhook(url=webhook_url, ...) at
-                # startup, and in some Railway-style deployments that call
-                # races with (or silently overrides) any setWebhook our
-                # start.sh issued earlier — leaving Telegram with an empty
-                # webhook URL while our server happily listens, so no
-                # updates are ever delivered.
-                #
-                # The deployment's start.sh owns webhook registration
-                # explicitly via the Bot API.  Here we only want PTB to
-                # start the HTTP listener, so we omit webhook_url.
+                # PTB's `bootstrap_set_webhook` is invoked unconditionally
+                # inside Updater.start_webhook(); passing webhook_url=""
+                # makes Telegram reject the call ("an https url must be
+                # provided for webhook") and the Updater's network retry
+                # loop ends up clearing the webhook on Telegram's side
+                # entirely. So we must pass the explicit URL even though
+                # start.sh has already registered one — PTB's call simply
+                # re-affirms the same URL.
                 await self._app.updater.start_webhook(
                     listen="0.0.0.0",
                     port=webhook_port,
                     url_path=webhook_path,
+                    webhook_url=webhook_url,
                     secret_token=webhook_secret,
                     allowed_updates=Update.ALL_TYPES,
                     drop_pending_updates=True,
                 )
                 self._webhook_mode = True
                 logger.info(
-                    "[%s] Webhook server listening on 0.0.0.0:%d%s "
-                    "(setWebhook ownership: external — deployment start.sh)",
+                    "[%s] Webhook server listening on 0.0.0.0:%d%s",
                     self.name, webhook_port, webhook_path,
                 )
             else:
