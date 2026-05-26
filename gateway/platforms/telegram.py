@@ -1654,6 +1654,12 @@ class TelegramAdapter(BasePlatformAdapter):
                 # entirely. So we must pass the explicit URL even though
                 # start.sh has already registered one — PTB's call simply
                 # re-affirms the same URL.
+                # drop_pending_updates=False so Telegram's per-session
+                # cache survives PTB's bootstrap_set_webhook cycles. When
+                # this was True, each implicit setWebhook on the gateway
+                # side would drop any update Telegram had been holding
+                # while the webhook was briefly empty, silently
+                # swallowing inbound messages.
                 await self._app.updater.start_webhook(
                     listen="0.0.0.0",
                     port=webhook_port,
@@ -1661,7 +1667,7 @@ class TelegramAdapter(BasePlatformAdapter):
                     webhook_url=webhook_url,
                     secret_token=webhook_secret,
                     allowed_updates=Update.ALL_TYPES,
-                    drop_pending_updates=True,
+                    drop_pending_updates=False,
                 )
                 self._webhook_mode = True
                 logger.info(
